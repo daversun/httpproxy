@@ -19,18 +19,22 @@
 #define MAX_SIZE 1024
 
 struct HostInfo{
-	int status;
-	char type[16];
-    char host[32];
-    char port[8];
+    int status;		//get host information success or errno
+    char type[16];	//CONNECT GET OR POST
+    char host[32];	//HOST, eg: baidu.com
+    char port[8];	//80 or other
 };
 
 
+/*
+ * data: the data to parse
+ * host_info: store the result we parse
+ */
 void parse(char* data, struct HostInfo* host_info){
     std::string s = data;
     std::string::size_type pos = s.find("Host");
     bool flag = false;
-	int type_index = 0;
+    int type_index = 0;
 
     if(pos == std::string::npos){
         host_info->status = 0;
@@ -66,6 +70,10 @@ void parse(char* data, struct HostInfo* host_info){
 	host_info->status = 1;
 }
 
+/*
+ * data: according the given data to create a connection
+ * return: connection
+ */
 int createConnectionForServer(char* data){
 
 	struct HostInfo host_info;
@@ -93,6 +101,9 @@ int createConnectionForServer(char* data){
 
 }
 
+/*
+ * solving zombie processes to avoid waste the resource of os
+ */
 void sigchild(int signo){
 	while(waitpid(-1, NULL, WNOHANG) > 0);
 }
@@ -100,12 +111,11 @@ void sigchild(int signo){
 void proxy(){
 	struct HostInfo target_host;
 	int socket_fd, conn_fd;
-
+	int opt = 1;
 
 	socklen_t addrlen;
 	sockaddr_in addr, clientaddr;
 	char return_data[] = "HTTP/1.1 200 Connection Established\r\n\r\n";
-	char senddata[MAX_SIZE];
 
 	signal(SIGCHLD, sigchild);
 
@@ -116,16 +126,26 @@ void proxy(){
 	addr.sin_port   = htons(9999);
 	addr.sin_addr.s_addr = INADDR_ANY;
 	
+	//set port can be reused
+	if(setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0){
+		perror("setsockopt");
+		exit(0);
+	}
+
+	//make socket_fd and addr binding
 	if(bind(socket_fd, (sockaddr*)&addr, sizeof(addr)) < 0){
 		perror("bind");
 		exit(0);
 	}
 
+	//listen the connection request
 	listen(socket_fd, 64);
 	
 	
 	while(true){
+		//get a connection from queue
 		conn_fd = accept(socket_fd, NULL, NULL);
+		//create a processror to solve this request
 		if(fork() == 0){
 			close(socket_fd);
 			
@@ -142,6 +162,10 @@ void proxy(){
 		
 			parse(data, &host);
 			
+			/*
+ 				note here very important
+				if you find is CONNECT header, write data to client or write the data to server
+ 			*/
 			if(!strcmp("CONNECT", host.type))write(conn_fd, return_data, strlen(return_data));
 			else write(target_fd, data, len);
 
